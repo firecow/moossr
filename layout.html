@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cowsite</title>
+  <script src="https://cdn.jsdelivr.net/npm/pinecone-router@7.5.0/dist/router.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+  <style>
+    body { font-family: system-ui; max-width: 600px; margin: 2rem auto; }
+    nav { display: flex; gap: 1rem; margin-bottom: 2rem; }
+    nav a { text-decoration: none; color: #0066cc; }
+    nav a:hover { text-decoration: underline; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
+    .game-tile { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; }
+    .game-tile h3 { margin: 0 0 0.5rem; }
+    .game-tile p { margin: 0; color: #666; }
+  </style>
+</head>
+<body>
+  <div x-data>
+    <nav>
+      <a href="/" x-link>Home</a>
+      <a href="/about" x-link>About</a>
+    </nav>
+    <!-- routes -->
+  </div>
+</body>
+</html>
