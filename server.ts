@@ -17,7 +17,8 @@ async function loadRoutes(): Promise<Map<string, string>> {
   const routes = new Map<string, string>();
   for (const file of await readdir("pages")) {
     if (!file.endsWith(".html")) continue;
-    const route = file === "index.html" ? "/" : `/${file.replace(".html", "")}`;
+    const name = file.replace(".html", "");
+    const route = name === "index" ? "/" : name === "404" ? "notfound" : `/${name}`;
     routes.set(route, await Bun.file(`pages/${file}`).text());
   }
   return routes;
@@ -82,8 +83,10 @@ const server = Bun.serve({
     components = await loadComponents();
 
     const layout = await Bun.file("layout.html").text();
+    const isKnownRoute = routes.has(url.pathname);
     const html = await ssr(layout, url.pathname);
     return new Response(html, {
+      status: isKnownRoute ? 200 : 404,
       headers: { "Content-Type": "text/html" },
     });
   },
