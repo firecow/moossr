@@ -1,4 +1,8 @@
-<div x-data="{ games: [] }" x-init="games = await (await fetch('https://jsonplaceholder.typicode.com/albums')).json()">
+<script>
+const games = await fetch('https://jsonplaceholder.typicode.com/albums').then(r => r.json());
+</script>
+
+<div>
   <h1>Games</h1>
   <div class="grid">
     <template x-for="game in games" :key="game.id">

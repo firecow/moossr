@@ -2,9 +2,7 @@ import { parseHTML } from "linkedom";
 import { readdir } from "node:fs/promises";
 
 const PORT = 3000;
-const ORIGIN = `http://localhost:${PORT}`;
 
-// Load components from components/ directory
 async function loadComponents(): Promise<Map<string, string>> {
   const components = new Map<string, string>();
   for (const file of await readdir("components")) {
@@ -15,7 +13,6 @@ async function loadComponents(): Promise<Map<string, string>> {
   return components;
 }
 
-// Build route table from pages/ directory
 async function loadRoutes(): Promise<Map<string, string>> {
   const routes = new Map<string, string>();
   for (const file of await readdir("pages")) {
@@ -26,7 +23,6 @@ async function loadRoutes(): Promise<Map<string, string>> {
   return routes;
 }
 
-// Replace <component-name> tags with component HTML
 function resolveComponents(html: string, components: Map<string, string>): string {
   for (const [tag, content] of components) {
     html = html.replaceAll(`<${tag}></${tag}>`, content.trim());
@@ -34,6 +30,36 @@ function resolveComponents(html: string, components: Map<string, string>): strin
     html = html.replaceAll(`<${tag}/>`, content.trim());
   }
   return html;
+}
+
+function extractPageScript(html: string): { script: string; template: string } {
+  const match = html.match(/<script>([\s\S]*?)<\/script>/);
+  if (!match) return { script: "", template: html };
+  return {
+    script: match[1].trim(),
+    template: html.replace(match[0], "").trim(),
+  };
+}
+
+function extractVariableNames(script: string): string[] {
+  const names: string[] = [];
+  const regex = /\b(?:const|let|var)\s+(\w+)\s*=/g;
+  let match;
+  while ((match = regex.exec(script)) !== null) {
+    names.push(match[1]);
+  }
+  return names;
+}
+
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+
+async function executeScript(script: string, variables: string[]): Promise<Record<string, unknown>> {
+  const fn = new AsyncFunction(`${script}\nreturn { ${variables.join(", ")} };`);
+  return await fn();
+}
+
+function scriptToXInit(script: string): string {
+  return script.replace(/\b(const|let|var)\s+/g, "");
 }
 
 let routes = await loadRoutes();
@@ -44,6 +70,12 @@ const server = Bun.serve({
 
   async fetch(req) {
     const url = new URL(req.url);
+
+    // Serve static files from public/
+    const staticFile = Bun.file(`public${url.pathname}`);
+    if (await staticFile.exists()) {
+      return new Response(staticFile);
+    }
 
     // Reload in dev so you don't have to restart
     routes = await loadRoutes();
@@ -58,72 +90,65 @@ const server = Bun.serve({
 });
 
 async function ssr(layout: string, pathname: string): Promise<string> {
-  // Generate <template x-route> for each page, with components resolved
   let routeTemplates = "";
+  let activeData: Record<string, unknown> = {};
+
   for (const [route, content] of routes) {
     const resolved = resolveComponents(content, components);
-    routeTemplates += `<template x-route="${route}" x-template>\n${resolved}\n</template>\n`;
+    const { script, template } = extractPageScript(resolved);
+
+    let processedTemplate = template;
+
+    if (script) {
+      const variables = extractVariableNames(script);
+      const data = await executeScript(script, variables);
+      const xInit = scriptToXInit(script);
+
+      if (route === pathname) {
+        activeData = data;
+      }
+
+      const { document: tempDoc } = parseHTML(template);
+      const root = tempDoc.firstElementChild;
+      if (root) {
+        const xDataEntries = variables
+          .map((v) => `${v}: ${JSON.stringify(data[v])}`)
+          .join(", ");
+        root.setAttribute("x-data", `{ ${xDataEntries} }`);
+        root.setAttribute("x-init", xInit);
+        processedTemplate = root.outerHTML;
+      }
+    }
+
+    routeTemplates += `<template x-route="${route}" x-template>\n${processedTemplate}\n</template>\n`;
   }
 
-  // Inject routes into layout
   let html = layout.replace("<!-- routes -->", routeTemplates);
-
   const { document } = parseHTML(html);
 
-  // Find the route matching the current path
   const activeRoute = document.querySelector(
     `template[x-route="${pathname}"]`
   );
   if (!activeRoute) return document.toString();
 
-  // Parse the route content for SSR processing
+  if (Object.keys(activeData).length === 0) return document.toString();
+
+  // Pre-render x-for templates for active route
   const routeContent = activeRoute.innerHTML.trim();
   const { document: routeDoc } = parseHTML(routeContent);
 
-  // Process x-init fetch calls
-  for (const el of routeDoc.querySelectorAll("[x-init]")) {
-    const xInit = el.getAttribute("x-init") ?? "";
+  for (const forTemplate of routeDoc.querySelectorAll("template[x-for]")) {
+    const xFor = forTemplate.getAttribute("x-for") ?? "";
+    const match = xFor.match(/(\w+)\s+in\s+(\w+)/);
+    if (!match) continue;
 
-    const fetchMatch = xInit.match(
-      /(\w+)\s*=\s*await\s*\(await\s*fetch\(['"]([^'"]+)['"]\)\)\.json\(\)/
-    );
-    if (!fetchMatch) continue;
+    const [, itemVar, collectionVar] = match;
+    const collection = activeData[collectionVar];
+    if (!Array.isArray(collection)) continue;
 
-    const [, collectionVar, fetchUrl] = fetchMatch;
+    const templateContent = forTemplate.innerHTML.trim();
 
-    const response = await fetch(
-      fetchUrl.startsWith("http") ? fetchUrl : `${ORIGIN}${fetchUrl}`
-    );
-    const data = await response.json();
-
-    // Inject data into x-data
-    const xData = el.getAttribute("x-data") ?? "{}";
-    el.setAttribute(
-      "x-data",
-      xData.replace(
-        new RegExp(`${collectionVar}:\\s*\\[\\]`),
-        `${collectionVar}: ${JSON.stringify(data)}`
-      )
-    );
-
-    // Clean up SSR nodes when Alpine inits
-    el.setAttribute(
-      "x-init",
-      `$el.querySelectorAll('[data-ssr]').forEach(e => e.remove())`
-    );
-
-    // Pre-render x-for templates
-    const template = el.querySelector(
-      `template[x-for*=" in ${collectionVar}"]`
-    );
-    if (!template) continue;
-
-    const itemVar =
-      template.getAttribute("x-for")?.match(/(\w+)\s+in\s+/)?.[1] ?? "";
-    const templateContent = template.innerHTML.trim();
-
-    for (const item of data as Record<string, unknown>[]) {
-      // Parse within the same document to avoid stray <head>/<body> tags
+    for (const item of collection as Record<string, unknown>[]) {
       const wrapper = routeDoc.createElement("div");
       wrapper.innerHTML = templateContent;
       const root = wrapper.firstElementChild;
@@ -136,15 +161,25 @@ async function ssr(layout: string, pathname: string): Promise<string> {
         if (!xText) continue;
         const propMatch = xText.match(new RegExp(`${itemVar}\\.(\\w+)`));
         if (!propMatch) continue;
-        node.textContent = String(item[propMatch[1]] ?? "");
+        node.textContent = String(
+          (item as Record<string, unknown>)[propMatch[1]] ?? ""
+        );
         node.removeAttribute("x-text");
       }
 
-      template.parentNode!.insertBefore(root, template);
+      forTemplate.parentNode!.insertBefore(root, forTemplate);
     }
   }
 
-  // Insert pre-rendered content before the route template
+  // SSR container only needs cleanup, not re-fetch
+  const ssrRoot = routeDoc.querySelector("[x-init]");
+  if (ssrRoot) {
+    ssrRoot.setAttribute(
+      "x-init",
+      `$el.querySelectorAll('[data-ssr]').forEach(e => e.remove())`
+    );
+  }
+
   const ssrContainer = document.createElement("div");
   ssrContainer.setAttribute("x-show", "false");
   ssrContainer.innerHTML = routeDoc.toString();
