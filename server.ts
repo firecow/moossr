@@ -142,16 +142,17 @@ async function ssr(layout: string, pathname: string): Promise<string> {
 
   for (const forTemplate of routeDoc.querySelectorAll("template[x-for]")) {
     const xFor = forTemplate.getAttribute("x-for") ?? "";
-    const match = xFor.match(/(\w+)\s+in\s+(\w+)/);
+    const match = xFor.match(/\(?\s*(\w+)(?:\s*,\s*(\w+))?\s*\)?\s+in\s+(\w+)/);
     if (!match) continue;
 
-    const [, itemVar, collectionVar] = match;
+    const [, itemVar, indexVar, collectionVar] = match;
     const collection = activeData[collectionVar];
     if (!Array.isArray(collection)) continue;
 
     const templateContent = forTemplate.innerHTML.trim();
 
-    for (const item of collection as Record<string, unknown>[]) {
+    for (let i = 0; i < collection.length; i++) {
+      const item = collection[i];
       const wrapper = routeDoc.createElement("div");
       wrapper.innerHTML = templateContent;
       const root = wrapper.firstElementChild;
@@ -159,14 +160,19 @@ async function ssr(layout: string, pathname: string): Promise<string> {
 
       root.setAttribute("data-ssr", "");
 
+      const context: Record<string, unknown> = { [itemVar]: item };
+      if (indexVar) context[indexVar] = i;
+
       for (const node of [root, ...root.querySelectorAll("[x-text]")]) {
         const xText = node.getAttribute("x-text");
         if (!xText) continue;
-        const propMatch = xText.match(new RegExp(`${itemVar}\\.(\\w+)`));
-        if (!propMatch) continue;
-        node.textContent = String(
-          (item as Record<string, unknown>)[propMatch[1]] ?? ""
-        );
+        try {
+          const keys = Object.keys(context);
+          const fn = new Function(...keys, `return ${xText}`);
+          node.textContent = String(fn(...keys.map((k) => context[k])) ?? "");
+        } catch {
+          continue;
+        }
         node.removeAttribute("x-text");
       }
 
