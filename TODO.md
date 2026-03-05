@@ -6,7 +6,6 @@
 
 ## Routing
 - No nested routes or dynamic params (`/posts/:id`)
-- No 404 handling
 
 ## Head/meta management
 - Pages can't set their own `<title>`, meta descriptions, or Open Graph tags. Essential for SEO, which is the main reason people want SSR.
