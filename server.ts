@@ -62,7 +62,7 @@ async function ssr(layout: string, pathname: string): Promise<string> {
   let routeTemplates = "";
   for (const [route, content] of routes) {
     const resolved = resolveComponents(content, components);
-    routeTemplates += `<template x-route="${route}">\n${resolved}\n</template>\n`;
+    routeTemplates += `<template x-route="${route}" x-template>\n${resolved}\n</template>\n`;
   }
 
   // Inject routes into layout
@@ -146,7 +146,7 @@ async function ssr(layout: string, pathname: string): Promise<string> {
 
   // Insert pre-rendered content before the route template
   const ssrContainer = document.createElement("div");
-  ssrContainer.setAttribute("data-ssr-route", "");
+  ssrContainer.setAttribute("x-show", "false");
   ssrContainer.innerHTML = routeDoc.toString();
   activeRoute.before(ssrContainer);
 
