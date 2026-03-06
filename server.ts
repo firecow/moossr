@@ -64,6 +64,16 @@ function resolveComponents(html: string, components: Map<string, string>): strin
   return html;
 }
 
+function extractPageHead(html: string): { head: string; template: string } {
+  const headRegex = /<page-head>([\s\S]*?)<\/page-head>/;
+  const match = headRegex.exec(html);
+  if (!match) return { head: "", template: html };
+  return {
+    head: match[1]?.trim() ?? "",
+    template: html.replace(match[0], "").trim(),
+  };
+}
+
 function extractPageScript(html: string): { script: string; template: string } {
   const scriptRegex = /<script>([\s\S]*?)<\/script>/;
   const match = scriptRegex.exec(html);
@@ -133,13 +143,35 @@ const server = Bun.serve({
   },
 });
 
+const CLIENT_SCRIPT = `<script>
+(function() {
+  function updateTitle() {
+    var path = location.pathname;
+    var t = document.querySelector('template[x-route="' + path + '"]')
+      || document.querySelector('template[x-route="notfound"]');
+    if (t && t.dataset.title) document.title = t.dataset.title;
+  }
+  var _push = history.pushState.bind(history);
+  history.pushState = function() { _push.apply(history, arguments); updateTitle(); };
+  window.addEventListener('popstate', updateTitle);
+})();
+</script>`;
+
 async function ssr(layout: string, pathname: string): Promise<string> {
   let routeTemplates = "";
   let activeData: Record<string, unknown> = {};
 
+  let activeHead = "";
+
   for (const [route, content] of routes) {
     const resolved = resolveComponents(content, components);
-    const { script, template } = extractPageScript(resolved);
+    const { script, template: templateWithHead } = extractPageScript(resolved);
+    const { head, template } = extractPageHead(templateWithHead);
+
+    const isActive = route === pathname || (route === "notfound" && !routes.has(pathname));
+    if (isActive) {
+      activeHead = head;
+    }
 
     let processedTemplate = template;
 
@@ -148,7 +180,7 @@ async function ssr(layout: string, pathname: string): Promise<string> {
       const data = await executeScript(script, variables);
       const xInit = scriptToXInit(script);
 
-      if (route === pathname) {
+      if (isActive) {
         activeData = data;
       }
 
@@ -164,10 +196,28 @@ async function ssr(layout: string, pathname: string): Promise<string> {
       }
     }
 
-    routeTemplates += `<template x-route="${route}" x-template>\n${processedTemplate}\n</template>\n`;
+    const titleMatch = (/<title>([\s\S]*?)<\/title>/).exec(head);
+    const pageTitle = titleMatch?.[1]?.trim() ?? "";
+    const titleAttr = pageTitle ? ` data-title="${pageTitle.replaceAll('"', "&quot;")}"` : "";
+    routeTemplates += `<template x-route="${route}"${titleAttr} x-template>\n${processedTemplate}\n</template>\n`;
   }
 
-  const html = layout.replace("<!-- routes -->", routeTemplates);
+  let html = layout.replace("<!-- routes -->", routeTemplates);
+
+  if (activeHead) {
+    const titleRegex = /<title>[\s\S]*?<\/title>/;
+    const pageTitleMatch = titleRegex.exec(activeHead);
+    if (pageTitleMatch) {
+      html = html.replace(titleRegex, pageTitleMatch[0]);
+      activeHead = activeHead.replace(pageTitleMatch[0], "").trim();
+    }
+    if (activeHead) {
+      html = html.replace("</head>", `  ${activeHead}\n</head>`);
+    }
+  }
+
+  html = html.replace("</body>", `${CLIENT_SCRIPT}\n</body>`);
+
   const { document } = parseHTML(html);
 
   const activeRoute = document.querySelector(
