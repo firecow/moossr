@@ -1,8 +1,13 @@
 import { createHash } from "node:crypto";
 import { parseHTML } from "linkedom";
 import { readdir } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 
 const PORT = 3000;
+
+function serializeDocument(doc: { toString(): string }): string {
+  return doc.toString();
+}
 
 async function loadComponents(): Promise<Map<string, string>> {
   const components = new Map<string, string>();
@@ -60,10 +65,11 @@ function resolveComponents(html: string, components: Map<string, string>): strin
 }
 
 function extractPageScript(html: string): { script: string; template: string } {
-  const match = html.match(/<script>([\s\S]*?)<\/script>/);
+  const scriptRegex = /<script>([\s\S]*?)<\/script>/;
+  const match = scriptRegex.exec(html);
   if (!match) return { script: "", template: html };
   return {
-    script: match[1].trim(),
+    script: match[1]?.trim() ?? "",
     template: html.replace(match[0], "").trim(),
   };
 }
@@ -73,16 +79,15 @@ function extractVariableNames(script: string): string[] {
   const regex = /\b(?:const|let|var)\s+(\w+)\s*=/g;
   let match;
   while ((match = regex.exec(script)) !== null) {
-    names.push(match[1]);
+    const name = match[1];
+    if (name) names.push(name);
   }
   return names;
 }
 
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-
 async function executeScript(script: string, variables: string[]): Promise<Record<string, unknown>> {
-  const fn = new AsyncFunction(`${script}\nreturn { ${variables.join(", ")} };`);
-  return await fn();
+  const code = `(async () => { ${script}\nreturn { ${variables.join(", ")} }; })()`;
+  return runInNewContext(code, { fetch }) as Promise<Record<string, unknown>>;
 }
 
 function scriptToXInit(script: string): string {
@@ -162,33 +167,39 @@ async function ssr(layout: string, pathname: string): Promise<string> {
     routeTemplates += `<template x-route="${route}" x-template>\n${processedTemplate}\n</template>\n`;
   }
 
-  let html = layout.replace("<!-- routes -->", routeTemplates);
+  const html = layout.replace("<!-- routes -->", routeTemplates);
   const { document } = parseHTML(html);
 
   const activeRoute = document.querySelector(
     `template[x-route="${pathname}"]`
   );
-  if (!activeRoute) return document.toString();
+  if (!activeRoute) return serializeDocument(document);
 
-  if (Object.keys(activeData).length === 0) return document.toString();
+  if (Object.keys(activeData).length === 0) return serializeDocument(document);
 
   // Pre-render x-for templates for active route
   const routeContent = activeRoute.innerHTML.trim();
   const { document: routeDoc } = parseHTML(routeContent);
 
+  const xForRegex = /\(?\s*(\w+)(?:\s*,\s*(\w+))?\s*\)?\s+in\s+(\w+)/;
   for (const forTemplate of routeDoc.querySelectorAll("template[x-for]")) {
     const xFor = forTemplate.getAttribute("x-for") ?? "";
-    const match = xFor.match(/\(?\s*(\w+)(?:\s*,\s*(\w+))?\s*\)?\s+in\s+(\w+)/);
+    const match = xForRegex.exec(xFor);
     if (!match) continue;
 
-    const [, itemVar, indexVar, collectionVar] = match;
+    const itemVar = match[1];
+    const indexVar = match[2];
+    const collectionVar = match[3];
+    if (!itemVar || !collectionVar) continue;
+
     const collection = activeData[collectionVar];
     if (!Array.isArray(collection)) continue;
+    const items = collection as unknown[];
 
     const templateContent = forTemplate.innerHTML.trim();
 
-    for (let i = 0; i < collection.length; i++) {
-      const item = collection[i];
+    for (let i = 0; i < items.length; i++) {
+      const item: unknown = items[i];
       const wrapper = routeDoc.createElement("div");
       wrapper.innerHTML = templateContent;
       const root = wrapper.firstElementChild;
@@ -203,16 +214,17 @@ async function ssr(layout: string, pathname: string): Promise<string> {
         const xText = node.getAttribute("x-text");
         if (!xText) continue;
         try {
-          const keys = Object.keys(context);
-          const fn = new Function(...keys, `return ${xText}`);
-          node.textContent = String(fn(...keys.map((k) => context[k])) ?? "");
+          const result = runInNewContext(xText, context) as unknown;
+          node.textContent = typeof result === "string" || typeof result === "number"
+            ? String(result)
+            : JSON.stringify(result);
         } catch {
           continue;
         }
         node.removeAttribute("x-text");
       }
 
-      forTemplate.parentNode!.insertBefore(root, forTemplate);
+      forTemplate.parentNode?.insertBefore(root, forTemplate);
     }
   }
 
@@ -227,10 +239,10 @@ async function ssr(layout: string, pathname: string): Promise<string> {
 
   const ssrContainer = document.createElement("div");
   ssrContainer.setAttribute("x-show", "false");
-  ssrContainer.innerHTML = routeDoc.toString();
+  ssrContainer.innerHTML = serializeDocument(routeDoc);
   activeRoute.before(ssrContainer);
 
-  return document.toString();
+  return serializeDocument(document);
 }
 
-console.log(`http://localhost:${server.port}`);
+console.log(`http://localhost:${String(server.port)}`);
