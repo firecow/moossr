@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { parseHTML } from "linkedom";
 import { readdir } from "node:fs/promises";
 
@@ -22,6 +23,31 @@ async function loadRoutes(): Promise<Map<string, string>> {
     routes.set(route, await Bun.file(`pages/${file}`).text());
   }
   return routes;
+}
+
+async function buildAssetManifest(): Promise<{ pathMap: Map<string, string>; fileMap: Map<string, string> }> {
+  const pathMap = new Map<string, string>();
+  const fileMap = new Map<string, string>();
+  for (const file of await readdir("public")) {
+    if (!file.includes(".")) continue;
+    const content = await Bun.file(`public/${file}`).arrayBuffer();
+    const hash = createHash("sha256")
+      .update(new Uint8Array(content))
+      .digest("hex")
+      .slice(0, 8);
+    const dotIndex = file.lastIndexOf(".");
+    const hashedName = `${file.slice(0, dotIndex)}.${hash}${file.slice(dotIndex)}`;
+    pathMap.set(`/${file}`, `/${hashedName}`);
+    fileMap.set(`/${hashedName}`, `public/${file}`);
+  }
+  return { pathMap, fileMap };
+}
+
+function rewriteAssetPaths(html: string, pathMap: Map<string, string>): string {
+  for (const [original, hashed] of pathMap) {
+    html = html.replaceAll(original, hashed);
+  }
+  return html;
 }
 
 function resolveComponents(html: string, components: Map<string, string>): string {
@@ -65,12 +91,21 @@ function scriptToXInit(script: string): string {
 
 let routes = await loadRoutes();
 let components = await loadComponents();
+let assets = await buildAssetManifest();
 
 const server = Bun.serve({
   port: PORT,
 
   async fetch(req) {
     const url = new URL(req.url);
+
+    // Serve hashed static assets with immutable cache
+    const hashedFile = assets.fileMap.get(url.pathname);
+    if (hashedFile) {
+      return new Response(Bun.file(hashedFile), {
+        headers: { "Cache-Control": "public, max-age=31536000, immutable" },
+      });
+    }
 
     // Serve static files from public/
     const staticFile = Bun.file(`public${url.pathname}`);
@@ -81,11 +116,12 @@ const server = Bun.serve({
     // Reload in dev so you don't have to restart
     routes = await loadRoutes();
     components = await loadComponents();
+    assets = await buildAssetManifest();
 
     const layout = await Bun.file("layout.html").text();
     const isKnownRoute = routes.has(url.pathname);
     const html = await ssr(layout, url.pathname);
-    return new Response(html, {
+    return new Response(rewriteAssetPaths(html, assets.pathMap), {
       status: isKnownRoute ? 200 : 404,
       headers: { "Content-Type": "text/html" },
     });
