@@ -147,12 +147,15 @@ const CLIENT_SCRIPT = `<script>
 (function() {
   function updateTitle() {
     var path = location.pathname;
-    var t = document.querySelector('template[x-route="' + path + '"]')
+    var t = Array.from(document.querySelectorAll('template[x-route]'))
+      .find(function(el) { return el.getAttribute('x-route') === path; })
       || document.querySelector('template[x-route="notfound"]');
     if (t && t.dataset.title) document.title = t.dataset.title;
   }
-  var _push = history.pushState.bind(history);
+  var _push = history.pushState;
+  var _replace = history.replaceState;
   history.pushState = function() { _push.apply(history, arguments); updateTitle(); };
+  history.replaceState = function() { _replace.apply(history, arguments); updateTitle(); };
   window.addEventListener('popstate', updateTitle);
 })();
 </script>`;
