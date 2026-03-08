@@ -145,17 +145,25 @@ const server = Bun.serve({
 
 const CLIENT_SCRIPT = `<script>
 (function() {
-  function updateTitle() {
+  function updateHead() {
     var path = location.pathname;
     var t = Array.from(document.querySelectorAll('template[x-route]'))
       .find(function(el) { return el.getAttribute('x-route') === path; })
       || document.querySelector('template[x-route="notfound"]');
-    if (t && t.dataset.title) document.title = t.dataset.title;
+    if (!t) return;
+    if (t.dataset.title) document.title = t.dataset.title;
+    var meta = document.querySelector('meta[name="description"]');
+    if (t.dataset.description) {
+      if (!meta) { meta = document.createElement('meta'); meta.setAttribute('name', 'description'); document.head.appendChild(meta); }
+      meta.setAttribute('content', t.dataset.description);
+    } else if (meta) {
+      meta.remove();
+    }
   }
   var _push = history.pushState;
   var _replace = history.replaceState;
-  history.pushState = function() { _push.apply(history, arguments); updateTitle(); };
-  history.replaceState = function() { _replace.apply(history, arguments); updateTitle(); };
+  history.pushState = function() { _push.apply(history, arguments); updateHead(); };
+  history.replaceState = function() { _replace.apply(history, arguments); updateHead(); };
   window.addEventListener('popstate', updateTitle);
 })();
 </script>`;
@@ -202,7 +210,9 @@ async function ssr(layout: string, pathname: string): Promise<string> {
     const titleMatch = (/<title>([\s\S]*?)<\/title>/).exec(head);
     const pageTitle = titleMatch?.[1]?.trim() ?? "";
     const titleAttr = pageTitle ? ` data-title="${pageTitle.replaceAll('"', "&quot;")}"` : "";
-    routeTemplates += `<template x-route="${route}"${titleAttr} x-template>\n${processedTemplate}\n</template>\n`;
+    const descMatch = (/<meta\s+name="description"\s+content="([^"]*)"/).exec(head);
+    const descAttr = descMatch?.[1] ? ` data-description="${descMatch[1].replaceAll('"', "&quot;")}"` : "";
+    routeTemplates += `<template x-route="${route}"${titleAttr}${descAttr} x-template>\n${processedTemplate}\n</template>\n`;
   }
 
   let html = layout.replace("<!-- routes -->", routeTemplates);
