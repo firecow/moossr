@@ -65,7 +65,7 @@ function resolveComponents(html: string, components: Map<string, string>): strin
 }
 
 function extractPageHead(html: string): { head: string; template: string } {
-  const headRegex = /<page-head>([\s\S]*?)<\/page-head>/;
+  const headRegex = /<moo-head>([\s\S]*?)<\/moo-head>/;
   const match = headRegex.exec(html);
   if (!match) return { head: "", template: html };
   return {
@@ -215,7 +215,7 @@ async function ssr(layout: string, pathname: string): Promise<string> {
     routeTemplates += `<template x-route="${route}"${titleAttr}${descAttr} x-template>\n${processedTemplate}\n</template>\n`;
   }
 
-  let html = layout.replace("<moo-routes></moo-routes>", routeTemplates);
+  let html = layout.replace("<moo-route-outlet></moo-route-outlet>", routeTemplates);
 
   if (activeHead) {
     const titleRegex = /<title>[\s\S]*?<\/title>/;
