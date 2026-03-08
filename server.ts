@@ -215,7 +215,7 @@ async function ssr(layout: string, pathname: string): Promise<string> {
     routeTemplates += `<template x-route="${route}"${titleAttr}${descAttr} x-template>\n${processedTemplate}\n</template>\n`;
   }
 
-  let html = layout.replace("<!-- routes -->", routeTemplates);
+  let html = layout.replace("<moo-routes></moo-routes>", routeTemplates);
 
   if (activeHead) {
     const titleRegex = /<title>[\s\S]*?<\/title>/;
