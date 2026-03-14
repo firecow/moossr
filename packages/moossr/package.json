@@ -1,0 +1,12 @@
+{
+  "name": "moossr",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": ["src"],
+  "dependencies": {
+    "linkedom": "^0.18.12"
+  }
+}

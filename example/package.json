@@ -1,0 +1,7 @@
+{
+  "name": "moossr-example",
+  "private": true,
+  "dependencies": {
+    "moossr": "*"
+  }
+}

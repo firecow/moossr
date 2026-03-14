@@ -3,39 +3,45 @@ import { parseHTML } from "linkedom";
 import { readdir } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 
-const PORT = 3000;
+export interface MoossrOptions {
+  port: number;
+  layoutFile?: string;
+  pagesDir?: string;
+  componentsDir?: string;
+  publicDir?: string;
+}
 
 function serializeDocument(doc: { toString(): string }): string {
   return doc.toString();
 }
 
-async function loadComponents(): Promise<Map<string, string>> {
+async function loadComponents(dir: string): Promise<Map<string, string>> {
   const components = new Map<string, string>();
-  for (const file of await readdir("components")) {
+  for (const file of await readdir(dir)) {
     if (!file.endsWith(".html")) continue;
     const tag = file.replace(".html", "");
-    components.set(tag, await Bun.file(`components/${file}`).text());
+    components.set(tag, await Bun.file(`${dir}/${file}`).text());
   }
   return components;
 }
 
-async function loadRoutes(): Promise<Map<string, string>> {
+async function loadRoutes(dir: string): Promise<Map<string, string>> {
   const routes = new Map<string, string>();
-  for (const file of await readdir("pages")) {
+  for (const file of await readdir(dir)) {
     if (!file.endsWith(".html")) continue;
     const name = file.replace(".html", "");
     const route = name === "index" ? "/" : name === "404" ? "notfound" : `/${name}`;
-    routes.set(route, await Bun.file(`pages/${file}`).text());
+    routes.set(route, await Bun.file(`${dir}/${file}`).text());
   }
   return routes;
 }
 
-async function buildAssetManifest(): Promise<{ pathMap: Map<string, string>; fileMap: Map<string, string> }> {
+async function buildAssetManifest(dir: string): Promise<{ pathMap: Map<string, string>; fileMap: Map<string, string> }> {
   const pathMap = new Map<string, string>();
   const fileMap = new Map<string, string>();
-  for (const file of await readdir("public")) {
+  for (const file of await readdir(dir)) {
     if (!file.includes(".")) continue;
-    const content = await Bun.file(`public/${file}`).arrayBuffer();
+    const content = await Bun.file(`${dir}/${file}`).arrayBuffer();
     const hash = createHash("sha256")
       .update(new Uint8Array(content))
       .digest("hex")
@@ -43,7 +49,7 @@ async function buildAssetManifest(): Promise<{ pathMap: Map<string, string>; fil
     const dotIndex = file.lastIndexOf(".");
     const hashedName = `${file.slice(0, dotIndex)}.${hash}${file.slice(dotIndex)}`;
     pathMap.set(`/${file}`, `/${hashedName}`);
-    fileMap.set(`/${hashedName}`, `public/${file}`);
+    fileMap.set(`/${hashedName}`, `${dir}/${file}`);
   }
   return { pathMap, fileMap };
 }
@@ -104,45 +110,6 @@ function scriptToXInit(script: string): string {
   return script.replace(/\b(const|let|var)\s+/g, "");
 }
 
-let routes = await loadRoutes();
-let components = await loadComponents();
-let assets = await buildAssetManifest();
-
-const server = Bun.serve({
-  port: PORT,
-
-  async fetch(req) {
-    const url = new URL(req.url);
-
-    // Serve hashed static assets with immutable cache
-    const hashedFile = assets.fileMap.get(url.pathname);
-    if (hashedFile) {
-      return new Response(Bun.file(hashedFile), {
-        headers: { "Cache-Control": "public, max-age=31536000, immutable" },
-      });
-    }
-
-    // Serve static files from public/
-    const staticFile = Bun.file(`public${url.pathname}`);
-    if (await staticFile.exists()) {
-      return new Response(staticFile);
-    }
-
-    // Reload in dev so you don't have to restart
-    routes = await loadRoutes();
-    components = await loadComponents();
-    assets = await buildAssetManifest();
-
-    const layout = await Bun.file("layout.html").text();
-    const isKnownRoute = routes.has(url.pathname);
-    const html = await ssr(layout, url.pathname);
-    return new Response(rewriteAssetPaths(html, assets.pathMap), {
-      status: isKnownRoute ? 200 : 404,
-      headers: { "Content-Type": "text/html" },
-    });
-  },
-});
-
 const CLIENT_SCRIPT = `<script>
 (function() {
   function updateHead() {
@@ -164,14 +131,18 @@ const CLIENT_SCRIPT = `<script>
   var _replace = history.replaceState;
   history.pushState = function() { _push.apply(history, arguments); updateHead(); };
   history.replaceState = function() { _replace.apply(history, arguments); updateHead(); };
-  window.addEventListener('popstate', updateTitle);
+  window.addEventListener('popstate', updateHead);
 })();
 </script>`;
 
-async function ssr(layout: string, pathname: string): Promise<string> {
+async function ssr(
+  layout: string,
+  pathname: string,
+  routes: Map<string, string>,
+  components: Map<string, string>,
+): Promise<string> {
   let routeTemplates = "";
   let activeData: Record<string, unknown> = {};
-
   let activeHead = "";
 
   for (const [route, content] of routes) {
@@ -240,7 +211,6 @@ async function ssr(layout: string, pathname: string): Promise<string> {
 
   if (Object.keys(activeData).length === 0) return serializeDocument(document);
 
-  // Pre-render x-for templates for active route
   const routeContent = activeRoute.innerHTML.trim();
   const { document: routeDoc } = parseHTML(routeContent);
 
@@ -291,7 +261,6 @@ async function ssr(layout: string, pathname: string): Promise<string> {
     }
   }
 
-  // SSR container only needs cleanup, not re-fetch
   const ssrRoot = routeDoc.querySelector("[x-init]");
   if (ssrRoot) {
     ssrRoot.setAttribute(
@@ -308,4 +277,49 @@ async function ssr(layout: string, pathname: string): Promise<string> {
   return serializeDocument(document);
 }
 
-console.log(`http://localhost:${String(server.port)}`);
+export async function createServer(options: MoossrOptions) {
+  const {
+    port,
+    layoutFile = "layout.html",
+    pagesDir = "pages",
+    componentsDir = "components",
+    publicDir = "public",
+  } = options;
+
+  let routes = await loadRoutes(pagesDir);
+  let components = await loadComponents(componentsDir);
+  let assets = await buildAssetManifest(publicDir);
+
+  return Bun.serve({
+    port,
+
+    async fetch(req) {
+      const url = new URL(req.url);
+
+      const hashedFile = assets.fileMap.get(url.pathname);
+      if (hashedFile) {
+        return new Response(Bun.file(hashedFile), {
+          headers: { "Cache-Control": "public, max-age=31536000, immutable" },
+        });
+      }
+
+      const staticFile = Bun.file(`${publicDir}${url.pathname}`);
+      if (await staticFile.exists()) {
+        return new Response(staticFile);
+      }
+
+      // Reload in dev so you don't have to restart
+      routes = await loadRoutes(pagesDir);
+      components = await loadComponents(componentsDir);
+      assets = await buildAssetManifest(publicDir);
+
+      const layout = await Bun.file(layoutFile).text();
+      const isKnownRoute = routes.has(url.pathname);
+      const html = await ssr(layout, url.pathname, routes, components);
+      return new Response(rewriteAssetPaths(html, assets.pathMap), {
+        status: isKnownRoute ? 200 : 404,
+        headers: { "Content-Type": "text/html" },
+      });
+    },
+  });
+}

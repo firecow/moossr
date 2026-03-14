@@ -1,7 +1,8 @@
 {
-  "name": "moossr",
-  "dependencies": {
-    "linkedom": "^0.18.12"
+  "private": true,
+  "workspaces": ["packages/*", "example"],
+  "scripts": {
+    "example": "bun run example/server.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
