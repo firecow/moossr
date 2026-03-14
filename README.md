@@ -22,7 +22,7 @@ console.log(`http://localhost:${String(server.port)}`);
 Run it:
 
 ```sh
-npx jiti server.ts
+node server.ts
 ```
 
 ### Project structure
