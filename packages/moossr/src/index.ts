@@ -4,7 +4,7 @@ import { readdir } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 
 export interface MoossrOptions {
-  port: number;
+  port?: number;
   layoutFile?: string;
   pagesDir?: string;
   componentsDir?: string;
@@ -279,7 +279,7 @@ async function ssr(
 
 export async function createServer(options: MoossrOptions) {
   const {
-    port,
+    port = 3000,
     layoutFile = "layout.html",
     pagesDir = "pages",
     componentsDir = "components",

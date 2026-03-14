@@ -15,7 +15,7 @@ Create a `server.ts`:
 ```ts
 import { createServer } from "moossr";
 
-const server = await createServer({ port: 3000 });
+const server = await createServer();
 console.log(`http://localhost:${String(server.port)}`);
 ```
 
@@ -137,7 +137,7 @@ Files in `public/` are served statically. Asset paths are automatically hashed f
 
 ```ts
 createServer({
-  port: 3000,                  // required
+  port: 3000,                  // default
   layoutFile: "layout.html",   // default
   pagesDir: "pages",           // default
   componentsDir: "components", // default
