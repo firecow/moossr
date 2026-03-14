@@ -346,7 +346,6 @@ export async function createServer(options: MoossrOptions) {
       return;
     }
 
-    // Reload in dev so you don't have to restart
     routes = await loadRoutes(pagesDir);
     components = await loadComponents(componentsDir);
     assets = await buildAssetManifest(publicDir);
