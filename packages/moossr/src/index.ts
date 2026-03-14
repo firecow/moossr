@@ -323,7 +323,10 @@ export async function createServer(options: MoossrOptions) {
   let assets = await buildAssetManifest(publicDir);
 
   const server = createHttpServer((req, res) => {
-    void (async () => {
+    void handleRequest(req, res);
+  });
+
+  async function handleRequest(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) {
     const url = new URL(req.url ?? "/", `http://localhost:${String(port)}`);
 
     const hashedFile = assets.fileMap.get(url.pathname);
@@ -353,8 +356,7 @@ export async function createServer(options: MoossrOptions) {
     const html = await ssr(layout, url.pathname, routes, components);
     res.writeHead(isKnownRoute ? 200 : 404, { "Content-Type": "text/html" });
     res.end(rewriteAssetPaths(html, assets.pathMap));
-    })();
-  });
+  }
 
   return new Promise<{ port: number }>((resolve) => {
     server.listen(port, () => {
