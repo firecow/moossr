@@ -1,11 +1,11 @@
 # moossr
 
-Server-side rendered Alpine.js with Bun.
+alpine.js + ssr
 
 ## Install
 
 ```sh
-bun add moossr
+npm install moossr
 ```
 
 ## Usage
@@ -22,7 +22,7 @@ console.log(`http://localhost:${String(server.port)}`);
 Run it:
 
 ```sh
-bun run server.ts
+npx jiti server.ts
 ```
 
 ### Project structure

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { createServer } from "moossr";
 
-const dir = import.meta.dir;
+const dir = import.meta.dirname;
 
 const server = await createServer({
   layoutFile: join(dir, "layout.html"),

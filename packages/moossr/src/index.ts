@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
+import { extname } from "node:path";
 import { parseHTML } from "linkedom";
-import { readdir } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 
 export interface MoossrOptions {
@@ -9,6 +11,36 @@ export interface MoossrOptions {
   pagesDir?: string;
   componentsDir?: string;
   publicDir?: string;
+}
+
+const MIME_TYPES: Record<string, string> = {
+  ".css": "text/css",
+  ".eot": "application/vnd.ms-fontobject",
+  ".gif": "image/gif",
+  ".html": "text/html",
+  ".ico": "image/x-icon",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".js": "application/javascript",
+  ".json": "application/json",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".ttf": "font/ttf",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
+
+function getMimeType(filePath: string): string {
+  return MIME_TYPES[extname(filePath)] ?? "application/octet-stream";
+}
+
+async function isFile(path: string): Promise<boolean> {
+  try {
+    const stats = await stat(path);
+    return stats.isFile();
+  } catch {
+    return false;
+  }
 }
 
 function serializeDocument(doc: { toString(): string }): string {
@@ -20,7 +52,7 @@ async function loadComponents(dir: string): Promise<Map<string, string>> {
   for (const file of await readdir(dir)) {
     if (!file.endsWith(".html")) continue;
     const tag = file.replace(".html", "");
-    components.set(tag, await Bun.file(`${dir}/${file}`).text());
+    components.set(tag, await readFile(`${dir}/${file}`, "utf-8"));
   }
   return components;
 }
@@ -31,7 +63,7 @@ async function loadRoutes(dir: string): Promise<Map<string, string>> {
     if (!file.endsWith(".html")) continue;
     const name = file.replace(".html", "");
     const route = name === "index" ? "/" : name === "404" ? "notfound" : `/${name}`;
-    routes.set(route, await Bun.file(`${dir}/${file}`).text());
+    routes.set(route, await readFile(`${dir}/${file}`, "utf-8"));
   }
   return routes;
 }
@@ -41,9 +73,9 @@ async function buildAssetManifest(dir: string): Promise<{ pathMap: Map<string, s
   const fileMap = new Map<string, string>();
   for (const file of await readdir(dir)) {
     if (!file.includes(".")) continue;
-    const content = await Bun.file(`${dir}/${file}`).arrayBuffer();
+    const content = await readFile(`${dir}/${file}`);
     const hash = createHash("sha256")
-      .update(new Uint8Array(content))
+      .update(content)
       .digest("hex")
       .slice(0, 8);
     const dotIndex = file.lastIndexOf(".");
@@ -290,36 +322,43 @@ export async function createServer(options: MoossrOptions) {
   let components = await loadComponents(componentsDir);
   let assets = await buildAssetManifest(publicDir);
 
-  return Bun.serve({
-    port,
+  const server = createHttpServer((req, res) => {
+    void (async () => {
+    const url = new URL(req.url ?? "/", `http://localhost:${String(port)}`);
 
-    async fetch(req) {
-      const url = new URL(req.url);
-
-      const hashedFile = assets.fileMap.get(url.pathname);
-      if (hashedFile) {
-        return new Response(Bun.file(hashedFile), {
-          headers: { "Cache-Control": "public, max-age=31536000, immutable" },
-        });
-      }
-
-      const staticFile = Bun.file(`${publicDir}${url.pathname}`);
-      if (await staticFile.exists()) {
-        return new Response(staticFile);
-      }
-
-      // Reload in dev so you don't have to restart
-      routes = await loadRoutes(pagesDir);
-      components = await loadComponents(componentsDir);
-      assets = await buildAssetManifest(publicDir);
-
-      const layout = await Bun.file(layoutFile).text();
-      const isKnownRoute = routes.has(url.pathname);
-      const html = await ssr(layout, url.pathname, routes, components);
-      return new Response(rewriteAssetPaths(html, assets.pathMap), {
-        status: isKnownRoute ? 200 : 404,
-        headers: { "Content-Type": "text/html" },
+    const hashedFile = assets.fileMap.get(url.pathname);
+    if (hashedFile) {
+      res.writeHead(200, {
+        "Content-Type": getMimeType(hashedFile),
+        "Cache-Control": "public, max-age=31536000, immutable",
       });
-    },
+      res.end(await readFile(hashedFile));
+      return;
+    }
+
+    const staticPath = `${publicDir}${url.pathname}`;
+    if (await isFile(staticPath)) {
+      res.writeHead(200, { "Content-Type": getMimeType(staticPath) });
+      res.end(await readFile(staticPath));
+      return;
+    }
+
+    // Reload in dev so you don't have to restart
+    routes = await loadRoutes(pagesDir);
+    components = await loadComponents(componentsDir);
+    assets = await buildAssetManifest(publicDir);
+
+    const layout = await readFile(layoutFile, "utf-8");
+    const isKnownRoute = routes.has(url.pathname);
+    const html = await ssr(layout, url.pathname, routes, components);
+    res.writeHead(isKnownRoute ? 200 : 404, { "Content-Type": "text/html" });
+    res.end(rewriteAssetPaths(html, assets.pathMap));
+    })();
+  });
+
+  return new Promise<{ port: number }>((resolve) => {
+    server.listen(port, () => {
+      resolve({ port });
+    });
   });
 }

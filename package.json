@@ -2,11 +2,11 @@
   "private": true,
   "workspaces": ["packages/*", "example"],
   "scripts": {
-    "example": "bun --watch run example/server.ts"
+    "example": "node --watch --import jiti/register example/server.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/bun": "^1.3.10",
+    "@types/node": "^22.0.0",
     "eslint": "^10.0.2",
     "jiti": "^2.6.1",
     "typescript": "^5.9.3",
