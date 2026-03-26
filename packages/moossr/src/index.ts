@@ -135,8 +135,8 @@ async function executeScript(script: string, variables: string[]): Promise<Recor
   return runInNewContext(code, { fetch }) as Promise<Record<string, unknown>>;
 }
 
-const ROUTER_SCRIPT = `<script>
-const originalPush = history.pushState;
+const ROUTER_BODY =
+`const originalPush = history.pushState;
 const originalReplace = history.replaceState;
 
 function navigate(path) {
@@ -177,8 +177,7 @@ document.addEventListener('click', (e) => {
 
 history.pushState = (...args) => { originalPush.apply(history, args); navigate(location.pathname); };
 history.replaceState = (...args) => { originalReplace.apply(history, args); navigate(location.pathname); };
-window.addEventListener('popstate', () => navigate(location.pathname));
-</script>`;
+window.addEventListener('popstate', () => navigate(location.pathname));`;
 
 function routeComponentName(route: string): string {
   if (route === "/") return "mooIndex";
@@ -290,17 +289,20 @@ async function ssr(
     `    outlet.replaceChildren(template.content.cloneNode(true));\n` +
     `  }`;
   const initParts = [...componentDefs, initRoute];
-  const initScript =
-    `<script>\ndocument.addEventListener('alpine:init', () => {\n` +
+  const mooScript =
+    `<script>\n` +
+    `document.addEventListener('alpine:init', () => {\n` +
     initParts.join("\n") +
-    `\n});\n</script>`;
-  html = html.replace("</head>", `${initScript}\n</head>`);
+    `\n});\n\n` +
+    ROUTER_BODY +
+    `\n</script>`;
+  html = html.replace("</head>", `${mooScript}\n</head>`);
 
   const { document } = parseHTML(html);
 
   const activeRoute = document.querySelector(`template[data-route="${pathname}"]`);
   function finalize(): string {
-    return serializeDocument(document).replace("</head>", `${ROUTER_SCRIPT}\n</head>`);
+    return serializeDocument(document);
   }
 
   if (!activeRoute) return finalize();
