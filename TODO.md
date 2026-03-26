@@ -9,4 +9,4 @@
 - No nested components
 
 ## Hydration
-- The data-ssr cleanup means Alpine re-renders everything the server already rendered — true hydration would reuse the existing DOM.
+- ~~The data-ssr cleanup means Alpine re-renders everything the server already rendered — true hydration would reuse the existing DOM.~~
