@@ -138,10 +138,6 @@ async function executeScript(script: string, variables: string[]): Promise<Recor
   return runInNewContext(code, { fetch }) as Promise<Record<string, unknown>>;
 }
 
-function scriptToXInit(script: string): string {
-  return script.replace(/\b(const|let|var)\s+/g, "");
-}
-
 const CLIENT_SCRIPT = `<script>
 (function() {
   function updateHead() {
@@ -161,11 +157,55 @@ const CLIENT_SCRIPT = `<script>
   }
   var _push = history.pushState;
   var _replace = history.replaceState;
-  history.pushState = function() { _push.apply(history, arguments); updateHead(); };
-  history.replaceState = function() { _replace.apply(history, arguments); updateHead(); };
-  window.addEventListener('popstate', updateHead);
+  function removeSsr() { var s = document.querySelector('[data-moo-ssr]'); if (s) s.remove(); }
+  history.pushState = function() { _push.apply(history, arguments); updateHead(); removeSsr(); };
+  history.replaceState = function() { _replace.apply(history, arguments); updateHead(); removeSsr(); };
+  window.addEventListener('popstate', function() { updateHead(); removeSsr(); });
 })();
 </script>`;
+
+function routeComponentName(route: string): string {
+  if (route === "/") return "mooIndex";
+  const name = route.slice(1).replace(/[^a-zA-Z0-9]+(.)/g, (_, c: string) => c.toUpperCase());
+  return "moo" + name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function buildComponentScript(name: string, variables: string[], script: string, hydration: boolean): string {
+  const defaults = variables.map((v) => `    ${v}: [],`).join("\n");
+  const assigns = variables.map((v) => `        this.${v} = result.${v};`).join("\n");
+  const fetchBlock =
+    `        var result = await (async () => {\n` +
+    `          ${script}\n` +
+    `          return { ${variables.join(", ")} };\n` +
+    `        })();\n` +
+    assigns;
+
+  let initBody: string;
+  if (hydration) {
+    const hydrateAssigns = variables.map((v) => `        this.${v} = data.${v};`).join("\n");
+    initBody =
+      `      var el = document.getElementById('moo-ssr-data');\n` +
+      `      if (el) {\n` +
+      `        var data = JSON.parse(el.textContent);\n` +
+      `${hydrateAssigns}\n` +
+      `        el.remove();\n` +
+      `        document.querySelector('[data-moo-ssr]')?.remove();\n` +
+      `      } else {\n` +
+      `${fetchBlock}\n` +
+      `      }`;
+  } else {
+    initBody = fetchBlock;
+  }
+
+  return (
+    `  Alpine.data('${name}', () => ({\n` +
+    `${defaults}\n` +
+    `    async init() {\n` +
+    `${initBody}\n` +
+    `    }\n` +
+    `  }));`
+  );
+}
 
 async function ssr(
   layout: string,
@@ -176,6 +216,7 @@ async function ssr(
   let routeTemplates = "";
   let activeData: Record<string, unknown> = {};
   let activeHead = "";
+  const componentDefs: string[] = [];
 
   for (const [route, content] of routes) {
     const resolved = resolveComponents(content, components);
@@ -191,21 +232,18 @@ async function ssr(
 
     if (script) {
       const variables = extractVariableNames(script);
-      const data = await executeScript(script, variables);
-      const xInit = scriptToXInit(script);
 
       if (isActive) {
-        activeData = data;
+        activeData = await executeScript(script, variables);
       }
+
+      const componentName = routeComponentName(route);
+      componentDefs.push(buildComponentScript(componentName, variables, script, isActive));
 
       const { document: tempDoc } = parseHTML(template);
       const root = tempDoc.firstElementChild;
       if (root) {
-        const xDataEntries = variables
-          .map((v) => `${v}: ${JSON.stringify(data[v])}`)
-          .join(", ");
-        root.setAttribute("x-data", `{ ${xDataEntries} }`);
-        root.setAttribute("x-init", xInit);
+        root.setAttribute("x-data", `${componentName}()`);
         processedTemplate = root.outerHTML;
       }
     }
@@ -232,6 +270,14 @@ async function ssr(
     }
   }
 
+  if (componentDefs.length > 0) {
+    const componentScript =
+      `<script>\ndocument.addEventListener('alpine:init', () => {\n` +
+      componentDefs.join("\n") +
+      `\n});\n</script>`;
+    html = html.replace("</head>", `${componentScript}\n</head>`);
+  }
+
   html = html.replace("</body>", `${CLIENT_SCRIPT}\n</body>`);
 
   const { document } = parseHTML(html);
@@ -242,6 +288,12 @@ async function ssr(
   if (!activeRoute) return serializeDocument(document);
 
   if (Object.keys(activeData).length === 0) return serializeDocument(document);
+
+  const dataScript = document.createElement("script");
+  dataScript.setAttribute("id", "moo-ssr-data");
+  dataScript.setAttribute("type", "application/json");
+  dataScript.textContent = JSON.stringify(activeData);
+  document.querySelector("head")?.appendChild(dataScript);
 
   const routeContent = activeRoute.innerHTML.trim();
   const { document: routeDoc } = parseHTML(routeContent);
@@ -270,8 +322,6 @@ async function ssr(
       const root = wrapper.firstElementChild;
       if (!root) continue;
 
-      root.setAttribute("data-ssr", "");
-
       const context: Record<string, unknown> = { [itemVar]: item };
       if (indexVar) context[indexVar] = i;
 
@@ -291,18 +341,18 @@ async function ssr(
 
       forTemplate.parentNode?.insertBefore(root, forTemplate);
     }
+
+    forTemplate.remove();
   }
 
-  const ssrRoot = routeDoc.querySelector("[x-init]");
+  const ssrRoot = routeDoc.firstElementChild;
   if (ssrRoot) {
-    ssrRoot.setAttribute(
-      "x-init",
-      `$el.querySelectorAll('[data-ssr]').forEach(e => e.remove())`
-    );
+    ssrRoot.removeAttribute("x-data");
+    ssrRoot.removeAttribute("x-init");
   }
 
   const ssrContainer = document.createElement("div");
-  ssrContainer.setAttribute("x-show", "false");
+  ssrContainer.setAttribute("data-moo-ssr", "");
   ssrContainer.innerHTML = serializeDocument(routeDoc);
   activeRoute.before(ssrContainer);
 

@@ -1,6 +1,7 @@
 {
   "name": "moossr-example",
   "private": true,
+  "type": "module",
   "dependencies": {
     "moossr": "*"
   }
