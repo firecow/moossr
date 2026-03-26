@@ -278,7 +278,7 @@ async function ssr(
       activeHead = activeHead.replace(pageTitleMatch[0], "").trim();
     }
     if (activeHead) {
-      html = html.replace("</head>", `  ${activeHead}\n</head>`);
+      html = html.replace("</title>", `</title>\n  ${activeHead}`);
     }
   }
 
