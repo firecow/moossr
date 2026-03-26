@@ -1,17 +1,17 @@
 <moo-head>
-  <title>Games - MooSSR</title>
-  <meta name="description" content="Browse our game collection">
+  <title>Albums - MooSSR</title>
+  <meta name="description" content="Browse our album collection">
 </moo-head>
 
 <script>
-const games = await fetch('https://jsonplaceholder.typicode.com/albums').then(r => r.json());
+const albums = await fetch('https://jsonplaceholder.typicode.com/albums').then(r => r.json());
 </script>
 
 <div>
-  <h1>Games</h1>
+  <h1>Albums</h1>
   <div class="grid">
-    <template x-for="game in games" :key="game.id">
-      <game-tile></game-tile>
+    <template x-for="album in albums" :key="album.id">
+      <album-card></album-card>
     </template>
   </div>
 </div>
