@@ -139,29 +139,38 @@ async function executeScript(script: string, variables: string[]): Promise<Recor
 }
 
 const CLIENT_SCRIPT = `<script>
-(function() {
-  function updateHead() {
-    var path = location.pathname;
-    var t = Array.from(document.querySelectorAll('template[x-route]'))
-      .find(function(el) { return el.getAttribute('x-route') === path; })
-      || document.querySelector('template[x-route="notfound"]');
-    if (!t) return;
-    if (t.dataset.title) document.title = t.dataset.title;
-    var meta = document.querySelector('meta[name="description"]');
-    if (t.dataset.description) {
-      if (!meta) { meta = document.createElement('meta'); meta.setAttribute('name', 'description'); document.head.appendChild(meta); }
-      meta.setAttribute('content', t.dataset.description);
-    } else if (meta) {
-      meta.remove();
-    }
+const originalPush = history.pushState;
+const originalReplace = history.replaceState;
+
+function updateHead() {
+  const template = document.querySelector(\`template[x-route="\${location.pathname}"]\`)
+    || document.querySelector('template[x-route="notfound"]');
+  if (!template) return;
+
+  if (template.dataset.title) {
+    document.title = template.dataset.title;
   }
-  var _push = history.pushState;
-  var _replace = history.replaceState;
-  function removeSsr() { var s = document.querySelector('[data-moo-ssr]'); if (s) s.remove(); }
-  history.pushState = function() { _push.apply(history, arguments); updateHead(); removeSsr(); };
-  history.replaceState = function() { _replace.apply(history, arguments); updateHead(); removeSsr(); };
-  window.addEventListener('popstate', function() { updateHead(); removeSsr(); });
-})();
+
+  let meta = document.querySelector('meta[name="description"]');
+  if (template.dataset.description) {
+    if (!meta) {
+      meta = Object.assign(document.createElement('meta'), { name: 'description' });
+      document.head.appendChild(meta);
+    }
+    meta.content = template.dataset.description;
+  } else {
+    meta?.remove();
+  }
+}
+
+function onNavigate() {
+  updateHead();
+  document.querySelector('[data-moo-ssr]')?.remove();
+}
+
+history.pushState = (...args) => { originalPush.apply(history, args); onNavigate(); };
+history.replaceState = (...args) => { originalReplace.apply(history, args); onNavigate(); };
+window.addEventListener('popstate', onNavigate);
 </script>`;
 
 function routeComponentName(route: string): string {
@@ -172,26 +181,23 @@ function routeComponentName(route: string): string {
 
 function buildComponentScript(name: string, variables: string[], script: string, hydration: boolean): string {
   const defaults = variables.map((v) => `    ${v}: [],`).join("\n");
-  const assigns = variables.map((v) => `        this.${v} = result.${v};`).join("\n");
+  const assigns = variables.map((v) => `      this.${v} = ${v};`).join("\n");
   const fetchBlock =
-    `        var result = await (async () => {\n` +
-    `          ${script}\n` +
-    `          return { ${variables.join(", ")} };\n` +
-    `        })();\n` +
+    `      ${script}\n` +
     assigns;
 
   let initBody: string;
   if (hydration) {
     const hydrateAssigns = variables.map((v) => `        this.${v} = data.${v};`).join("\n");
     initBody =
-      `      var el = document.getElementById('moo-ssr-data');\n` +
+      `      const el = document.getElementById('moo-ssr-data');\n` +
       `      if (el) {\n` +
-      `        var data = JSON.parse(el.textContent);\n` +
+      `        const data = JSON.parse(el.textContent);\n` +
       `${hydrateAssigns}\n` +
       `        el.remove();\n` +
       `        document.querySelector('[data-moo-ssr]')?.remove();\n` +
       `      } else {\n` +
-      `${fetchBlock}\n` +
+      `  ${fetchBlock}\n` +
       `      }`;
   } else {
     initBody = fetchBlock;
@@ -278,16 +284,18 @@ async function ssr(
     html = html.replace("</head>", `${componentScript}\n</head>`);
   }
 
-  html = html.replace("</body>", `${CLIENT_SCRIPT}\n</body>`);
-
   const { document } = parseHTML(html);
 
   const activeRoute = document.querySelector(
     `template[x-route="${pathname}"]`
   );
-  if (!activeRoute) return serializeDocument(document);
+  function finalize(): string {
+    return serializeDocument(document).replace("</head>", `${CLIENT_SCRIPT}\n</head>`);
+  }
 
-  if (Object.keys(activeData).length === 0) return serializeDocument(document);
+  if (!activeRoute) return finalize();
+
+  if (Object.keys(activeData).length === 0) return finalize();
 
   const dataScript = document.createElement("script");
   dataScript.setAttribute("id", "moo-ssr-data");
@@ -356,7 +364,7 @@ async function ssr(
   ssrContainer.innerHTML = serializeDocument(routeDoc);
   activeRoute.before(ssrContainer);
 
-  return serializeDocument(document);
+  return finalize();
 }
 
 export async function createServer(options: MoossrOptions) {
