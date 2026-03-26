@@ -138,14 +138,15 @@ async function executeScript(script: string, variables: string[]): Promise<Recor
   return runInNewContext(code, { fetch }) as Promise<Record<string, unknown>>;
 }
 
-const CLIENT_SCRIPT = `<script>
+const ROUTER_SCRIPT = `<script>
 const originalPush = history.pushState;
 const originalReplace = history.replaceState;
 
-function updateHead() {
-  const template = document.querySelector(\`template[x-route="\${location.pathname}"]\`)
-    || document.querySelector('template[x-route="notfound"]');
-  if (!template) return;
+function navigate(path) {
+  const outlet = document.getElementById('moo-outlet');
+  const template = document.querySelector(\`template[data-route="\${path}"]\`)
+    || document.querySelector('template[data-route="notfound"]');
+  if (!outlet || !template) return;
 
   if (template.dataset.title) {
     document.title = template.dataset.title;
@@ -161,16 +162,26 @@ function updateHead() {
   } else {
     meta?.remove();
   }
-}
 
-function onNavigate() {
-  updateHead();
   document.querySelector('[data-moo-ssr]')?.remove();
+  outlet.replaceChildren(template.content.cloneNode(true));
+  Alpine.initTree(outlet);
 }
 
-history.pushState = (...args) => { originalPush.apply(history, args); onNavigate(); };
-history.replaceState = (...args) => { originalReplace.apply(history, args); onNavigate(); };
-window.addEventListener('popstate', onNavigate);
+document.addEventListener('click', (e) => {
+  if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+  const link = e.target.closest('[data-link]');
+  if (!link) return;
+  e.preventDefault();
+  const href = link.getAttribute('href');
+  if (href !== location.pathname) {
+    history.pushState({}, '', href);
+  }
+});
+
+history.pushState = (...args) => { originalPush.apply(history, args); navigate(location.pathname); };
+history.replaceState = (...args) => { originalReplace.apply(history, args); navigate(location.pathname); };
+window.addEventListener('popstate', () => navigate(location.pathname));
 </script>`;
 
 function routeComponentName(route: string): string {
@@ -259,10 +270,10 @@ async function ssr(
     const titleAttr = pageTitle ? ` data-title="${pageTitle.replaceAll('"', "&quot;")}"` : "";
     const descMatch = (/<meta\s+name="description"\s+content="([^"]*)"/).exec(head);
     const descAttr = descMatch?.[1] ? ` data-description="${descMatch[1].replaceAll('"', "&quot;")}"` : "";
-    routeTemplates += `<template x-route="${route}"${titleAttr}${descAttr} x-template>\n${processedTemplate}\n</template>\n`;
+    routeTemplates += `<template data-route="${route}"${titleAttr}${descAttr}>\n${processedTemplate}\n</template>\n`;
   }
 
-  let html = layout.replace("<moo-route-outlet></moo-route-outlet>", routeTemplates);
+  let html = layout.replace("<moo-route-outlet></moo-route-outlet>", `<div id="moo-outlet"></div>\n${routeTemplates}`);
 
   if (activeHead) {
     const titleRegex = /<title>[\s\S]*?<\/title>/;
@@ -276,21 +287,27 @@ async function ssr(
     }
   }
 
-  if (componentDefs.length > 0) {
-    const componentScript =
-      `<script>\ndocument.addEventListener('alpine:init', () => {\n` +
-      componentDefs.join("\n") +
-      `\n});\n</script>`;
-    html = html.replace("</head>", `${componentScript}\n</head>`);
-  }
+  const initRoute =
+    `  const outlet = document.getElementById('moo-outlet');\n` +
+    `  const template = document.querySelector(\`template[data-route="\${location.pathname}"]\`)\n` +
+    `    || document.querySelector('template[data-route="notfound"]');\n` +
+    `  if (outlet && template) {\n` +
+    `    outlet.replaceChildren(template.content.cloneNode(true));\n` +
+    `  }`;
+  const initParts = [...componentDefs, initRoute];
+  const initScript =
+    `<script>\ndocument.addEventListener('alpine:init', () => {\n` +
+    initParts.join("\n") +
+    `\n});\n</script>`;
+  html = html.replace("</head>", `${initScript}\n</head>`);
 
   const { document } = parseHTML(html);
 
   const activeRoute = document.querySelector(
-    `template[x-route="${pathname}"]`
+    `template[data-route="${pathname}"]`
   );
   function finalize(): string {
-    return serializeDocument(document).replace("</head>", `${CLIENT_SCRIPT}\n</head>`);
+    return serializeDocument(document).replace("</head>", `${ROUTER_SCRIPT}\n</head>`);
   }
 
   if (!activeRoute) return finalize();
@@ -362,7 +379,10 @@ async function ssr(
   const ssrContainer = document.createElement("div");
   ssrContainer.setAttribute("data-moo-ssr", "");
   ssrContainer.innerHTML = serializeDocument(routeDoc);
-  activeRoute.before(ssrContainer);
+  const outlet = document.querySelector("#moo-outlet");
+  if (outlet) {
+    outlet.before(ssrContainer);
+  }
 
   return finalize();
 }
