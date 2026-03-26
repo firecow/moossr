@@ -74,10 +74,7 @@ async function buildAssetManifest(dir: string): Promise<{ pathMap: Map<string, s
   for (const file of await readdir(dir)) {
     if (!file.includes(".")) continue;
     const content = await readFile(`${dir}/${file}`);
-    const hash = createHash("sha256")
-      .update(content)
-      .digest("hex")
-      .slice(0, 8);
+    const hash = createHash("sha256").update(content).digest("hex").slice(0, 8);
     const dotIndex = file.lastIndexOf(".");
     const hashedName = `${file.slice(0, dotIndex)}.${hash}${file.slice(dotIndex)}`;
     pathMap.set(`/${file}`, `/${hashedName}`);
@@ -144,8 +141,7 @@ const originalReplace = history.replaceState;
 
 function navigate(path) {
   const outlet = document.getElementById('moo-outlet');
-  const template = document.querySelector(\`template[data-route="\${path}"]\`)
-    || document.querySelector('template[data-route="notfound"]');
+  const template = document.querySelector(\`template[data-route="\${path}"]\`) || document.querySelector('template[data-route="notfound"]');
   if (!outlet || !template) return;
 
   if (template.dataset.title) {
@@ -289,8 +285,7 @@ async function ssr(
 
   const initRoute =
     `  const outlet = document.getElementById('moo-outlet');\n` +
-    `  const template = document.querySelector(\`template[data-route="\${location.pathname}"]\`)\n` +
-    `    || document.querySelector('template[data-route="notfound"]');\n` +
+    `  const template = document.querySelector(\`template[data-route="\${location.pathname}"]\`) || document.querySelector('template[data-route="notfound"]');\n` +
     `  if (outlet && template) {\n` +
     `    outlet.replaceChildren(template.content.cloneNode(true));\n` +
     `  }`;
@@ -303,9 +298,7 @@ async function ssr(
 
   const { document } = parseHTML(html);
 
-  const activeRoute = document.querySelector(
-    `template[data-route="${pathname}"]`
-  );
+  const activeRoute = document.querySelector(`template[data-route="${pathname}"]`);
   function finalize(): string {
     return serializeDocument(document).replace("</head>", `${ROUTER_SCRIPT}\n</head>`);
   }
@@ -355,9 +348,7 @@ async function ssr(
         if (!xText) continue;
         try {
           const result = runInNewContext(xText, context) as unknown;
-          node.textContent = typeof result === "string" || typeof result === "number"
-            ? String(result)
-            : JSON.stringify(result);
+          node.textContent = typeof result === "string" || typeof result === "number" ? String(result) : JSON.stringify(result);
         } catch {
           continue;
         }
