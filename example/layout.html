@@ -4,8 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MooSSR</title>
-  <script defer src="https://cdn.jsdelivr.net/npm/pinecone-router@7.5.0/dist/router.min.js" integrity="sha384-YK7J8MHV08b24CozQOzifo9R0u/3KI0kAPMeYmSqzflPj4tK+zbnnET1eCiR4fgP" crossorigin="anonymous"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.0/dist/cdn.min.js" integrity="sha384-ZzplbkDNw4d2hjWc+D9EcDIgXEUybwPr2Slhix4BTtvQO3JbK60Av543BvQT9gTu" crossorigin="anonymous"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.15.0/cdn.min.js" integrity="sha384-ZzplbkDNw4d2hjWc+D9EcDIgXEUybwPr2Slhix4BTtvQO3JbK60Av543BvQT9gTu" crossorigin="anonymous"></script>
   <style>
     body { font-family: system-ui; max-width: 600px; margin: 2rem auto; }
     nav { display: flex; gap: 1rem; margin-bottom: 2rem; }
@@ -21,8 +20,8 @@
   <div x-data>
     <nav>
       <img src="/logo.svg" alt="MooSSR" width="32" height="32">
-      <a href="/" x-link>Home</a>
-      <a href="/about" x-link>About</a>
+      <a href="/" data-link>Home</a>
+      <a href="/about" data-link>About</a>
     </nav>
     <moo-route-outlet></moo-route-outlet>
   </div>
