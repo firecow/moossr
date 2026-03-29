@@ -10,9 +10,13 @@
     nav a { text-decoration: none; color: #0066cc; }
     nav a:hover { text-decoration: underline; }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
-    .album-card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; }
+    .album-card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; text-decoration: none; color: inherit; display: block; }
+    .album-card:hover { border-color: #0066cc; }
     .album-card h3 { margin: 0 0 0.5rem; }
     .album-card p { margin: 0; color: #666; }
+    .photo-card { text-align: center; }
+    .photo-card img { border-radius: 8px; }
+    .photo-card p { font-size: 0.85rem; color: #666; }
   </style>
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.15.0/cdn.min.js" integrity="sha384-ZzplbkDNw4d2hjWc+D9EcDIgXEUybwPr2Slhix4BTtvQO3JbK60Av543BvQT9gTu" crossorigin="anonymous"></script>
 </head>

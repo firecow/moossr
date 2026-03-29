@@ -71,7 +71,10 @@ Use `data-link` on anchors for client-side navigation.
 Each `.html` file in `pages/` becomes a route:
 - `index.html` → `/`
 - `about.html` → `/about`
+- `albums/[id].html` → `/albums/:id`
 - `404.html` → fallback for unknown routes
+
+Subdirectories map to URL segments. Bracket filenames like `[id].html` become dynamic parameters, available as `params.id` in page scripts.
 
 #### Per-page head/meta
 

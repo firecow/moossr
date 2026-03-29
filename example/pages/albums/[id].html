@@ -1,0 +1,22 @@
+<moo-head>
+  <title>Album - MooSSR</title>
+  <meta name="description" content="Album detail page">
+</moo-head>
+
+<script>
+const album = await fetch(`https://jsonplaceholder.typicode.com/albums/${params.id}`).then(r => r.json());
+const photos = await fetch(`https://jsonplaceholder.typicode.com/albums/${params.id}/photos?_limit=12`).then(r => r.json());
+</script>
+
+<div>
+  <p><a href="/" data-link>&larr; Back to albums</a></p>
+  <h1 x-text="album.title"></h1>
+  <div class="grid">
+    <template x-for="photo in photos" :key="photo.id">
+      <div class="photo-card">
+        <img :src="'https://picsum.photos/seed/' + photo.id + '/150'" :alt="photo.title" width="150" height="150">
+        <p x-text="photo.title"></p>
+      </div>
+    </template>
+  </div>
+</div>
