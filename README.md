@@ -15,7 +15,7 @@ Create a `server.ts`:
 ```ts
 import { createServer } from "moossr";
 
-const server = await createServer();
+const server = await createServer({});
 console.log(`http://localhost:${String(server.port)}`);
 ```
 
@@ -42,7 +42,7 @@ node server.ts
 
 ### Layout
 
-`layout.html` is the shell for all pages. Include [Alpine.js](https://alpinejs.dev/) and [Pinecone Router](https://github.com/pinecone-router/router), then use `<moo-route-outlet>` to mark where page content is injected.
+`layout.html` is the shell for all pages. Include [Alpine.js](https://alpinejs.dev/), then use `<moo-route-outlet>` to mark where page content is injected.
 
 ```html
 <!DOCTYPE html>
@@ -50,14 +50,13 @@ node server.ts
 <head>
   <meta charset="UTF-8">
   <title>My App</title>
-  <script src="https://cdn.jsdelivr.net/npm/pinecone-router@7.5.0/dist/router.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.15.0/cdn.min.js" integrity="sha384-ZzplbkDNw4d2hjWc+D9EcDIgXEUybwPr2Slhix4BTtvQO3JbK60Av543BvQT9gTu" crossorigin="anonymous"></script>
 </head>
 <body>
   <div x-data>
     <nav>
-      <a href="/" x-link>Home</a>
-      <a href="/about" x-link>About</a>
+      <a href="/" data-link>Home</a>
+      <a href="/about" data-link>About</a>
     </nav>
     <moo-route-outlet></moo-route-outlet>
   </div>
@@ -65,7 +64,7 @@ node server.ts
 </html>
 ```
 
-Use `x-link` on anchors for client-side navigation via Pinecone Router.
+Use `data-link` on anchors for client-side navigation.
 
 ### Pages
 
