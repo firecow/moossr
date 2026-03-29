@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
-import { extname } from "node:path";
+import { extname, join, relative, sep } from "node:path";
 import { parseHTML } from "linkedom";
 import { runInNewContext } from "node:vm";
 
@@ -11,6 +11,18 @@ export interface MoossrOptions {
   pagesDir?: string;
   componentsDir?: string;
   publicDir?: string;
+}
+
+interface Route {
+  pattern: string;
+  paramNames: string[];
+  regex: RegExp;
+  content: string;
+}
+
+interface RouteMatch {
+  route: Route;
+  params: Record<string, string>;
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -57,15 +69,86 @@ async function loadComponents(dir: string): Promise<Map<string, string>> {
   return components;
 }
 
-async function loadRoutes(dir: string): Promise<Map<string, string>> {
-  const routes = new Map<string, string>();
-  for (const file of await readdir(dir)) {
-    if (!file.endsWith(".html")) continue;
-    const name = file.replace(".html", "");
-    const route = name === "index" ? "/" : name === "404" ? "notfound" : `/${name}`;
-    routes.set(route, await readFile(`${dir}/${file}`, "utf-8"));
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function filePathToRoute(relPath: string): Omit<Route, "content"> {
+  const normalized = relPath.replaceAll(sep, "/").replace(/\.html$/, "");
+
+  if (normalized === "index" || normalized === "404") {
+    const pattern = normalized === "index" ? "/" : "notfound";
+    return { pattern, paramNames: [], regex: normalized === "index" ? /^\/$/ : /(?!)/ };
   }
+
+  const cleanPath = normalized.replace(/\/index$/, "");
+  const paramNames: string[] = [];
+  const regexParts: string[] = [];
+  const patternParts: string[] = [];
+
+  for (const segment of cleanPath.split("/")) {
+    const bracketMatch = /^\[(\w+)\]$/.exec(segment);
+    const paramName = bracketMatch?.[1];
+    if (paramName) {
+      paramNames.push(paramName);
+      regexParts.push("([^/]+)");
+      patternParts.push(`:${paramName}`);
+    } else {
+      regexParts.push(escapeRegex(segment));
+      patternParts.push(segment);
+    }
+  }
+
+  return {
+    pattern: "/" + patternParts.join("/"),
+    paramNames,
+    regex: new RegExp(`^/${regexParts.join("/")}$`),
+  };
+}
+
+async function walkPages(baseDir: string, currentDir: string, routes: Route[]): Promise<void> {
+  const entries = await readdir(currentDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = join(currentDir, entry.name);
+    if (entry.isDirectory()) {
+      await walkPages(baseDir, fullPath, routes);
+    } else if (entry.name.endsWith(".html")) {
+      const relPath = relative(baseDir, fullPath);
+      const meta = filePathToRoute(relPath);
+      routes.push({ ...meta, content: await readFile(fullPath, "utf-8") });
+    }
+  }
+}
+
+async function loadRoutes(dir: string): Promise<Route[]> {
+  const routes: Route[] = [];
+  await walkPages(dir, dir, routes);
+  routes.sort((a, b) => {
+    if (a.pattern === "notfound") return 1;
+    if (b.pattern === "notfound") return -1;
+    const aDynamic = a.paramNames.length > 0;
+    const bDynamic = b.paramNames.length > 0;
+    if (aDynamic !== bDynamic) return aDynamic ? 1 : -1;
+    return 0;
+  });
   return routes;
+}
+
+function matchRoute(pathname: string, routes: Route[]): RouteMatch | undefined {
+  for (const route of routes) {
+    if (route.pattern === "notfound") continue;
+    const match = route.regex.exec(pathname);
+    if (match) {
+      const params: Record<string, string> = {};
+      for (let i = 0; i < route.paramNames.length; i++) {
+        const name = route.paramNames[i];
+        const value = match[i + 1];
+        if (name && value) params[name] = decodeURIComponent(value);
+      }
+      return { route, params };
+    }
+  }
+  return undefined;
 }
 
 async function buildAssetManifest(dir: string): Promise<{ pathMap: Map<string, string>; fileMap: Map<string, string> }> {
@@ -130,37 +213,58 @@ function extractVariableNames(script: string): string[] {
   return names;
 }
 
-async function executeScript(script: string, variables: string[]): Promise<Record<string, unknown>> {
+async function executeScript(script: string, variables: string[], params: Record<string, string>): Promise<Record<string, unknown>> {
   const code = `(async () => { ${script}\nreturn { ${variables.join(", ")} }; })()`;
-  return runInNewContext(code, { fetch }) as Promise<Record<string, unknown>>;
+  return runInNewContext(code, { fetch, params }) as Promise<Record<string, unknown>>;
 }
 
 const ROUTER_BODY =
 `const originalPush = history.pushState;
 const originalReplace = history.replaceState;
 
+function matchClientRoute(path) {
+  for (const tpl of document.querySelectorAll('template[data-route]')) {
+    const pattern = tpl.dataset.route;
+    if (pattern === 'notfound') continue;
+    const paramNames = [];
+    const regexStr = pattern.replace(/:(\\w+)/g, (_, name) => {
+      paramNames.push(name);
+      return '([^/]+)';
+    });
+    const match = new RegExp('^' + regexStr + '$').exec(path);
+    if (match) {
+      const params = {};
+      paramNames.forEach((name, i) => { params[name] = decodeURIComponent(match[i + 1]); });
+      return { template: tpl, params };
+    }
+  }
+  const notfound = document.querySelector('template[data-route="notfound"]');
+  return notfound ? { template: notfound, params: {} } : null;
+}
+
 function navigate(path) {
   const outlet = document.getElementById('moo-outlet');
-  const template = document.querySelector(\`template[data-route="\${path}"]\`) || document.querySelector('template[data-route="notfound"]');
-  if (!outlet || !template) return;
+  const matched = matchClientRoute(path);
+  if (!outlet || !matched) return;
 
-  if (template.dataset.title) {
-    document.title = template.dataset.title;
+  if (matched.template.dataset.title) {
+    document.title = matched.template.dataset.title;
   }
 
   let meta = document.querySelector('meta[name="description"]');
-  if (template.dataset.description) {
+  if (matched.template.dataset.description) {
     if (!meta) {
       meta = Object.assign(document.createElement('meta'), { name: 'description' });
       document.head.appendChild(meta);
     }
-    meta.content = template.dataset.description;
+    meta.content = matched.template.dataset.description;
   } else {
     meta?.remove();
   }
 
   document.querySelector('[data-moo-ssr]')?.remove();
-  outlet.replaceChildren(template.content.cloneNode(true));
+  window.__mooParams = matched.params;
+  outlet.replaceChildren(matched.template.content.cloneNode(true));
   Alpine.initTree(outlet);
 }
 
@@ -189,6 +293,7 @@ function buildComponentScript(name: string, variables: string[], script: string,
   const defaults = variables.map((v) => `    ${v}: [],`).join("\n");
   const assigns = variables.map((v) => `      this.${v} = ${v};`).join("\n");
   const fetchBlock =
+    `      const params = window.__mooParams || {};\n` +
     `      ${script}\n` +
     assigns;
 
@@ -222,20 +327,21 @@ function buildComponentScript(name: string, variables: string[], script: string,
 async function ssr(
   layout: string,
   pathname: string,
-  routes: Map<string, string>,
+  routes: Route[],
   components: Map<string, string>,
+  activeMatch: RouteMatch | undefined,
 ): Promise<string> {
   let routeTemplates = "";
   let activeData: Record<string, unknown> = {};
   let activeHead = "";
   const componentDefs: string[] = [];
 
-  for (const [route, content] of routes) {
-    const resolved = resolveComponents(content, components);
+  for (const route of routes) {
+    const resolved = resolveComponents(route.content, components);
     const { script, template: templateWithHead } = extractPageScript(resolved);
     const { head, template } = extractPageHead(templateWithHead);
 
-    const isActive = route === pathname || (route === "notfound" && !routes.has(pathname));
+    const isActive = activeMatch ? route === activeMatch.route : route.pattern === "notfound";
     if (isActive) {
       activeHead = head;
     }
@@ -246,10 +352,10 @@ async function ssr(
       const variables = extractVariableNames(script);
 
       if (isActive) {
-        activeData = await executeScript(script, variables);
+        activeData = await executeScript(script, variables, activeMatch?.params ?? {});
       }
 
-      const componentName = routeComponentName(route);
+      const componentName = routeComponentName(route.pattern);
       componentDefs.push(buildComponentScript(componentName, variables, script, isActive));
 
       const { document: tempDoc } = parseHTML(template);
@@ -265,7 +371,7 @@ async function ssr(
     const titleAttr = pageTitle ? ` data-title="${pageTitle.replaceAll('"', "&quot;")}"` : "";
     const descMatch = (/<meta\s+name="description"\s+content="([^"]*)"/).exec(head);
     const descAttr = descMatch?.[1] ? ` data-description="${descMatch[1].replaceAll('"', "&quot;")}"` : "";
-    routeTemplates += `<template data-route="${route}"${titleAttr}${descAttr}>\n${processedTemplate}\n</template>\n`;
+    routeTemplates += `<template data-route="${route.pattern}"${titleAttr}${descAttr}>\n${processedTemplate}\n</template>\n`;
   }
 
   let html = layout.replace("<moo-route-outlet></moo-route-outlet>", `<div id="moo-outlet"></div>\n${routeTemplates}`);
@@ -284,9 +390,10 @@ async function ssr(
 
   const initRoute =
     `  const outlet = document.getElementById('moo-outlet');\n` +
-    `  const template = document.querySelector(\`template[data-route="\${location.pathname}"]\`) || document.querySelector('template[data-route="notfound"]');\n` +
-    `  if (outlet && template) {\n` +
-    `    outlet.replaceChildren(template.content.cloneNode(true));\n` +
+    `  const matched = matchClientRoute(location.pathname);\n` +
+    `  if (outlet && matched) {\n` +
+    `    window.__mooParams = matched.params;\n` +
+    `    outlet.replaceChildren(matched.template.content.cloneNode(true));\n` +
     `  }`;
   const initParts = [...componentDefs, initRoute];
   const mooScript =
@@ -296,13 +403,13 @@ async function ssr(
     `\n});\n\n` +
     ROUTER_BODY +
     `\n</script>`;
-  html = html.replace("</head>", `${mooScript}\n</head>`);
-
   const { document } = parseHTML(html);
 
-  const activeRoute = document.querySelector(`template[data-route="${pathname}"]`);
+  const activePattern = activeMatch?.route.pattern ?? pathname;
+  const activeRoute = document.querySelector(`template[data-route="${activePattern}"]`);
+  const headSuffix = `${mooScript}\n</head>`;
   function finalize(): string {
-    return serializeDocument(document);
+    return serializeDocument(document).replace("</head>", () => headSuffix);
   }
 
   if (!activeRoute) return finalize();
@@ -345,16 +452,26 @@ async function ssr(
       const context: Record<string, unknown> = { [itemVar]: item };
       if (indexVar) context[indexVar] = i;
 
-      for (const node of [root, ...root.querySelectorAll("[x-text]")]) {
-        const xText = node.getAttribute("x-text");
-        if (!xText) continue;
-        try {
-          const result = runInNewContext(xText, context) as unknown;
-          node.textContent = typeof result === "string" || typeof result === "number" ? String(result) : JSON.stringify(result);
-        } catch {
-          continue;
+      for (const node of [root, ...root.querySelectorAll("*")]) {
+        for (const attr of [...node.attributes]) {
+          if (attr.name === "x-text") {
+            try {
+              const result = runInNewContext(attr.value, context) as unknown;
+              node.textContent = typeof result === "string" || typeof result === "number" ? String(result) : JSON.stringify(result);
+            } catch {
+              continue;
+            }
+            node.removeAttribute("x-text");
+          } else if (attr.name.startsWith(":")) {
+            try {
+              const result = runInNewContext(attr.value, context) as unknown;
+              node.setAttribute(attr.name.slice(1), String(result));
+            } catch {
+              continue;
+            }
+            node.removeAttribute(attr.name);
+          }
         }
-        node.removeAttribute("x-text");
       }
 
       forTemplate.parentNode?.insertBefore(root, forTemplate);
@@ -371,6 +488,7 @@ async function ssr(
 
   const ssrContainer = document.createElement("div");
   ssrContainer.setAttribute("data-moo-ssr", "");
+  ssrContainer.setAttribute("x-ignore", "");
   ssrContainer.innerHTML = serializeDocument(routeDoc);
   const outlet = document.querySelector("#moo-outlet");
   if (outlet) {
@@ -422,9 +540,9 @@ export async function createServer(options: MoossrOptions = {}) {
     assets = await buildAssetManifest(publicDir);
 
     const layout = await readFile(layoutFile, "utf-8");
-    const isKnownRoute = routes.has(url.pathname);
-    const html = await ssr(layout, url.pathname, routes, components);
-    res.writeHead(isKnownRoute ? 200 : 404, { "Content-Type": "text/html" });
+    const activeMatch = matchRoute(url.pathname, routes);
+    const html = await ssr(layout, url.pathname, routes, components, activeMatch);
+    res.writeHead(activeMatch ? 200 : 404, { "Content-Type": "text/html" });
     res.end(rewriteAssetPaths(html, assets.pathMap));
   }
 
