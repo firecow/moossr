@@ -15,7 +15,7 @@ Create a `server.ts`:
 ```ts
 import { createServer } from "moossr";
 
-const server = await createServer({});
+const server = await createServer();
 console.log(`http://localhost:${String(server.port)}`);
 ```
 

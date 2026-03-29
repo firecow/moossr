@@ -380,7 +380,7 @@ async function ssr(
   return finalize();
 }
 
-export async function createServer(options: MoossrOptions) {
+export async function createServer(options: MoossrOptions = {}) {
   const {
     port = 3000,
     layoutFile = "layout.html",
